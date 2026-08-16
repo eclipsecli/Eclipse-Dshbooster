@@ -1,4 +1,4 @@
-# DSH Task Router v0
+# Eclipse Dshbooster
 
 An experimental task classifier for DeepSeek Harness routing. It looks at what the user is asking for and picks a behavior mode.
 
