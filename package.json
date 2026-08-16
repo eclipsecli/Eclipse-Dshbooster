@@ -1,0 +1,15 @@
+{
+  "name": "dsh-task-router-v0",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Explainable first-turn task classifier for DeepSeek Harness routing experiments",
+  "scripts": {
+    "test": "node --test",
+    "classify": "node src/cli.mjs",
+    "eval": "node scripts/evaluate.mjs examples/tasks.jsonl"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
