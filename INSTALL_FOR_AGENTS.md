@@ -1,32 +1,19 @@
 # Installing DSH Task Router for Agents
 
-This document is for an AI agent or automation worker installing the router on behalf of a user.
+Install the router in an isolated DSH home first. It changes the first-turn Persona and tool list, so inspect the resulting request before using it with an existing setup.
 
-## Safety boundary
+## Requirements
 
-The router changes the first-turn Persona and tool surface of a DSH preset. Treat installation as an isolated experiment until the request envelope, selected model, and first tool call have been inspected.
+- Node.js 20 or newer
+- a compatible DeepSeek Harness installation
+- the complete project directory
+- a configured provider and model for the live canary
 
-An installing agent must:
+The package has no runtime npm dependencies.
 
-- preserve the user's existing DSH home and configuration;
-- use a separate `DSH_HOME` or equivalent isolated profile for the first test;
-- never copy API keys into this project or commit credentials;
-- never change Gateway/OpenClaw configuration or restart services as part of installation;
-- never claim that routing improves task results before a held-out evaluation;
-- stop and report the exact failure if preset discovery or session creation fails.
+## 1. Check the package
 
-## Prerequisites
-
-- Node.js 20 or newer;
-- a compatible DeepSeek Harness installation, tested against the version actually in use;
-- an existing provider/model configuration in the isolated DSH profile if live requests are later authorized;
-- this complete project directory, including `src/`, `preset/`, `agent.cordis.yml`, and `preset.yml`.
-
-The package has no runtime npm dependencies. Do not install extra packages merely to use the classifier.
-
-## Step 1: inspect the package
-
-From the project root, run:
+Run these commands from the project root:
 
 ```bash
 node --version
@@ -34,101 +21,91 @@ npm test
 npm run eval
 node --check src/classifier.mjs
 node --check src/drift-probe.mjs
+node --check src/router-state.mjs
 node --check preset/router-bootstrap.mjs
 ```
 
-The development smoke corpus is only a wiring check. Its score is not an independent benchmark and must not be reported as production accuracy.
+The evaluation corpus is a wiring check, not a production benchmark. Also check that the directory contains no credentials, session data, or unrelated files.
 
-Check that the package contains no credentials, private keys, or unrelated runtime directories. If the source came from an archive or message attachment, inspect the file list before copying it into a preset directory.
+## 2. Create an isolated copy
 
-## Step 2: create an isolated preset copy
+Copy the whole project into the local preset directory used by the installed DSH version. Do not copy `preset/router-bootstrap.mjs` by itself; it imports files from `src/`.
 
-Copy the whole project directory into the isolated preset location expected by the installed DSH version. Do not copy only `preset/router-bootstrap.mjs`: it imports `src/classifier.mjs` and depends on the package configuration.
-
-Use a fresh isolated home, for example:
+Use a separate home for the first run:
 
 ```bash
 export DSH_HOME="$PWD/.dsh-task-router-test-home"
 mkdir -p "$DSH_HOME"
 ```
 
-The exact preset discovery location is DSH-version-specific. Consult the local DSH installation rules rather than guessing a production path.
+Preset discovery paths differ between DSH versions. Check the local DSH installation instead of guessing a production path.
 
-## Step 3: start with the safe configuration
+## 3. Start with local classification
 
-The default configuration is:
+The relevant preset options are:
 
 ```yaml
 llmClassifier: 'off'
 llmTimeoutMs: 1200
 llmMinConfidence: 0.7
+# stateDirectory: '/path/to/durable/router-state'
 ```
 
-Keep `llmClassifier: 'off'` for the first mount. This uses the zero-cost local classifier and avoids an additional model request.
+Keep `llmClassifier: 'off'` for the first run. This uses the local rule classifier and does not add another model request.
 
-Only after the local route is verified may an authorized operator test:
+When `stateDirectory` is omitted, state is written to `.router-state/` in each session workspace. Set it only when state must live elsewhere. Files are separated by session id and may contain task text, so do not commit them.
 
-- `ambiguous-only`: one short classifier request only for local abstentions;
-- `always`: one short classifier request for every first task.
+The optional modes are:
 
-The optional classifier reuses the current session route and stored credentials. It requests `reasoningEffort: 'off'`, has a short output cap and timeout, and has no tools. Invalid output, timeout, missing route, or low confidence must fall back without blocking the main session.
+- `ambiguous-only`: call the session model when local classification abstains
+- `always`: call the session model for every first task
 
-## Step 4: perform a no-prompt mount check
+The optional call reuses the current provider, model, and stored credentials. It runs with reasoning disabled, a short output limit, no tools, and a timeout. Invalid output or low confidence falls back to the local result.
 
-Before sending a user task or invoking a paid model, verify that:
+## 4. Check the mount
 
-1. the preset is discovered;
-2. it is not marked broken;
-3. a blank session can be created in the isolated home;
-4. the session reports the expected preset id;
-5. no model request or tool call was generated during this check.
+Before sending a prompt, confirm that:
 
-Record the DSH version, preset id, isolated home path, and session id in the local test log. Do not place credentials or full private conversation content in the log.
+1. the preset is discovered and not marked broken;
+2. a blank session can be created with the expected preset id;
+3. no model request or tool call was made during the check.
 
-## Step 5: run one authorized canary task
+Do not copy credentials into the project. Do not change OpenClaw or Gateway configuration as part of this test.
 
-Only with explicit authorization for a model request, send one small, reversible task in the isolated session. Inspect:
+## 5. Run one canary
 
-- the first `request/header` provider and model;
-- the effective reasoning setting;
-- the assembled Persona;
-- the first-turn tool schema;
-- the classifier result from `task_router_status`;
-- the first durable `tool/call`;
-- whether the full tool surface is restored after promotion.
+Send one small task in the isolated session, then inspect:
 
-The router does not select `deepseek-v4-pro`, `max`, or any other model by itself. The canary must verify the actual request evidence instead of inferring it from a preset name or local configuration.
+- the provider, model, and reasoning setting in `request/header`;
+- the assembled Persona and first-turn tool list;
+- the route and state returned by `task_router_status`;
+- the location of the `.router-state` file;
+- the first durable tool call and the restored tool list after promotion.
 
-## Step 6: inspect drift telemetry
+The router does not select a provider, model, or reasoning effort. Verify those values from the request rather than the preset name.
 
-Use `task_router_status` to inspect observable routing behavior. Look for:
+For a multi-step canary, declare an acceptance item with `task_router_verification`, record its verifier and coverage, and confirm with `task_router_status` that it is complete only after every declared item passes.
 
-- missing Persona anchor;
-- unexpected mode changes;
-- tool-surface mismatch;
-- repeated prompt assembly;
-- compaction or resume boundaries;
-- unusual tool-call repetition or long no-action periods.
+## 6. Check drift signals
 
-The probe intentionally does not retain or classify complete reasoning text. Do not describe its signals as evidence of internal chain-of-thought or MoE expert switching.
+`task_router_status` reports observable signals such as a missing Persona anchor, mode changes, tool-list mismatches, repeated prompt assembly, and compaction or resume events. It does not inspect or store chain-of-thought.
 
 ## Rollback
 
-Rollback is the reversible operation of stopping the isolated test and removing only the isolated preset copy. Do not delete the user's production DSH home, session history, credentials, or unrelated preset files. If the router was installed into a shared location by mistake, stop before modifying anything and ask the operator to approve the exact cleanup scope.
+Stop the isolated DSH process and remove only the isolated preset copy and test home. Do not remove an existing DSH home, credentials, session history, or unrelated presets.
 
-## Report format
+## Test report
 
-An installing agent should report:
+Record at least:
 
 ```text
 DSH version:
-Router version/commit:
+Router commit:
 OS:
 Isolated home:
 Preset discovered: yes/no
-Blank session created: yes/no
-Model request sent: yes/no
-Canary authorized: yes/no
+Session created: yes/no
+Canary sent: yes/no
 Observed provider/model:
 Observed reasoning setting:
 First-turn route:
@@ -138,4 +115,4 @@ Drift signals:
 Failures and evidence paths:
 ```
 
-Do not report the smoke corpus score as routing accuracy. Do not claim production readiness until Windows compatibility, real first-turn timing, and held-out task outcomes have been measured.
+Do not report the smoke corpus score as routing accuracy. Real routing benefit still needs held-out task results.

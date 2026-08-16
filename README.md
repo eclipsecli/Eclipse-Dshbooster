@@ -32,6 +32,8 @@ This package includes an experimental DSH preset entry (`agent.cordis.yml`) and 
 
 The adapter does not select a model route or reasoning effort; those remain separate DSH session settings and must be verified independently.
 
+The router also keeps a small state file for each session. It records `Goal / Core / Verified / Open / Next`, the current phase, checkpoints, and verification results. Files are written atomically under `.router-state/` in the session workspace unless `stateDirectory` is set. Reasoning text is not stored.
+
 For an agent-oriented installation and verification procedure, see [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md). The guide is deliberately conservative: use an isolated DSH home first and inspect the first request before any production use.
 
 ## Run
@@ -62,6 +64,7 @@ The rule classifier is the default. The preset can optionally ask the same sessi
     llmClassifier: 'ambiguous-only'
     llmTimeoutMs: 1200
     llmMinConfidence: 0.7
+    stateDirectory: '/path/to/durable/router-state'
 ```
 
 Modes:
@@ -76,11 +79,21 @@ The optional call runs at most once per session, reuses the current session's pr
 
 `src/drift-probe.mjs` exposes low-risk telemetry through `task_router_status`. It records only observable facts: tool-call count, assistant-message/chunk count, prompt assembly count, compaction/resume boundaries, expected mode, and missing-anchor or tool-surface mismatch signals. It does not retain reasoning text and does not claim to observe an internal chain-of-thought or expert route. A signal means "the externally observable contract changed," not "the model switched internal reasoning modes."
 
+## Task state and verification
+
+The first user task creates the state file and prompt anchor. The phase moves through `intake`, `plan`, `execute`, `verify`, and `recover` from explicit events and tool records:
+
+- `task_router_checkpoint` records active constraints, verified facts, open risks, the next action, and checkpoints.
+- `task_router_verification` declares completion requirements and records `passed`, `partial`, or `failed` results. A result record is rejected unless it names both the verifier and its coverage.
+- `task_router_status` returns the route, drift telemetry, ledger, and aggregate verification coverage.
+
+The first durable `tool/call` moves the phase to `execute`. Compaction and resume events move it to `recover`. A task is ready to finish only after at least one requirement has been declared and every requirement has a latest `passed` result.
+
 ## Known issues
 
 - It's a rule-based v0, not a trained classifier.
 - The phrase lists are bilingual but incomplete.
-- It classifies the first user request only; it does not yet use repository metadata or conversation state.
+- It classifies the first user request only. Later events update lifecycle state, but they do not reclassify the route or inspect repository metadata.
 - There is no measured routing benefit yet. The next stage is a labeled task collection and held-out evaluation.
 - `deep-react` is a hypothesis-backed experimental target, not a production recommendation.
 

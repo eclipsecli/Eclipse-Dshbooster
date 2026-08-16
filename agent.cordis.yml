@@ -13,6 +13,8 @@
     llmClassifier: 'off'
     llmTimeoutMs: 1200
     llmMinConfidence: 0.7
+    # Optional. Defaults to .router-state in the session workspace.
+    # stateDirectory: '/path/to/durable/router-state'
 
 - id: tool-bash
   name: '@deepseek-ai/dsh-tool-bash'
