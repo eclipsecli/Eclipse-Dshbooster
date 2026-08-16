@@ -1,0 +1,30 @@
+{"text":"修复当前项目登录失败的问题，先定位原因再运行回归测试。","expected":"maintenance"}
+{"text":"排查构建流水线为什么偶发崩溃。","expected":"maintenance"}
+{"text":"升级依赖并解决现有兼容问题。","expected":"maintenance"}
+{"text":"重构这个模块，但保持公共接口不变。","expected":"maintenance"}
+{"text":"Review the existing repository and fix the broken cache invalidation.","expected":"maintenance"}
+{"text":"Debug the failing test and identify the regression.","expected":"maintenance"}
+{"text":"先调研当前插件架构，再修复路由误判并运行回归测试。","expected":"maintenance"}
+{"text":"从零写一个网页小游戏，交付可运行版本。","expected":"greenfield"}
+{"text":"创建一个命令行日志清洗工具。","expected":"greenfield"}
+{"text":"搭建一个新的静态网站并实现首页。","expected":"greenfield"}
+{"text":"Implement a small CSV conversion script from scratch.","expected":"greenfield"}
+{"text":"Build a new minimal REST API and verify it works.","expected":"greenfield"}
+{"text":"生成一个可运行的待办事项应用。","expected":"greenfield"}
+{"text":"从零设计并实现一个跨文件插件架构，交付可运行版本。","expected":"greenfield"}
+{"text":"调研三个开源路由方案，比较机制和成本。","expected":"research"}
+{"text":"研究这个模型为什么对工具 schema 敏感。","expected":"research"}
+{"text":"系统性分析几种缓存策略的利弊。","expected":"research"}
+{"text":"Survey current approaches and evaluate their reproducibility.","expected":"research"}
+{"text":"Investigate whether the claimed benchmark gain has independent evidence.","expected":"research"}
+{"text":"对比两个方案的原理和可行性。","expected":"research"}
+{"text":"审查仓库的权限校验，找出潜在安全漏洞。","expected":"audit"}
+{"text":"对当前服务做安全审计并整理风险。","expected":"audit"}
+{"text":"Review the code for vulnerabilities and privilege escalation risks.","expected":"audit"}
+{"text":"Create a threat model for the existing authentication flow.","expected":"audit"}
+{"text":"检查这个接口有没有安全问题。","expected":"audit"}
+{"text":"帮我看看这个项目。","expected":"mixed"}
+{"text":"处理一下这个问题。","expected":"mixed"}
+{"text":"同时从零实现一个新模块并修复现有兼容问题。","expected":"mixed"}
+{"text":"Research alternatives and implement a new system while fixing the old one.","expected":"mixed"}
+{"text":"优化一下。","expected":"mixed"}
