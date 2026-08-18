@@ -1,0 +1,4 @@
+# Append this row to the DSH agent preset after installing the latest
+# odyssey-dsh-plugins bundle into the target profile.
+- id: odyssey-adapter
+  name: '@odyssey/dsh-adapter'

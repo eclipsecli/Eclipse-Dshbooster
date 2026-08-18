@@ -1,0 +1,3 @@
+{
+  "@odyssey/dsh-adapter": "file:../../plugins/dsh-adapter"
+}

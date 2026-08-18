@@ -4,6 +4,11 @@ Eclipse Dshbooster is a DeepSeek Harness routing preset with a strict first-turn
 
 This package is the phase 1 router/J-Space implementation. The full routing-suite behavior also includes the controlled `dsh-super-injector` companion; that privileged component is integrated and activated separately, with its own provenance and verification.
 
+Version 0.3 adds an optional compatibility row for the latest Odyssey plugin
+bundle. Dshbooster keeps ownership of the router/J-Space lifecycle, while the
+bundle's own `@odyssey/dsh-adapter` provides its lightweight agent-plane
+execution tools. See `integrations/odyssey/README.md`.
+
 ## Runtime contract
 
 - `standard` is the default. The first request contains exactly the platform shell (`bash` or `pwsh`) and `str_replace_editor`, with the exact persona `You are a helpful software engineer assistant.` Other prompt contexts and management tools are hidden.

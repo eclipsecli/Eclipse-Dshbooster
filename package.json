@@ -1,6 +1,6 @@
 {
   "name": "dsh-task-router-v0",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Eclipse Dshbooster routing and J-Space lifecycle protocol for DeepSeek Harness",

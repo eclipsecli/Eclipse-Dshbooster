@@ -19,6 +19,12 @@
     # Optional. Schema-v2 state defaults to .router-state in the workspace.
     # stateDirectory: '/path/to/durable/router-state'
 
+# Optional latest Odyssey package integration. The package must be installed in
+# the target DSH profile separately; this row only mounts its agent-plane
+# adapter. Host-plane console/rebrand/restart/vision plugins stay opt-in.
+- id: odyssey-adapter
+  name: '@odyssey/dsh-adapter'
+
 - id: tool-bash
   name: '@deepseek-ai/dsh-tool-bash'
   disabled: !!js process.platform === 'win32'
