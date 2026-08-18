@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { apply, classifyWithLlm } from '../preset/router-bootstrap.mjs'
 
 const allToolNames = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'str_replace_editor', 'web_search', 'dshbooster_status', 'dshbooster_mode', 'dshbooster_subagent', 'dshbooster_audit', 'task_router_status', 'task_router_checkpoint', 'task_router_verification']
@@ -150,5 +152,22 @@ test('persisted state is schema v2 and contains no reasoning text', async () => 
   const persisted = JSON.parse(readFileSync(join(h.stateDirectory, 's1.json'), 'utf8'))
   assert.equal(persisted.schemaVersion, 2)
   assert.equal(JSON.stringify(persisted).includes('reasoning'), false)
+  h.cleanup()
+})
+
+test('vendored J-Space modules required by the gate are committed and load without throwing', async () => {
+  // Regression: promotion plus a loop/complex task loads these module files. If
+  // they are missing the facade throws ENOENT and crashes the session.
+  const moduleDir = new URL('../vendor/j-space/j-space/modules/', import.meta.url)
+  const required = ['capacity.md', 'broadcast.md', 'introspection.md', 'deep-reasoning.md', 'directed-focus.md', 'empirics.md', 'markers.md', 'self-monitoring.md', 'shorthand.md']
+  for (const name of required) {
+    assert.equal(existsSync(fileURLToPath(new URL(name, moduleDir))), true, `missing vendored module ${name}`)
+  }
+  // A promoted loop task still assembles successfully (gate loads modules).
+  const h = harness()
+  h.event({ id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '重构整个项目并分多个文件实现' }] } })
+  h.event({ id: 't1', type: 'tool/call', data: { name: 'bash' } })
+  const result = await h.assemble()
+  assert.ok(result.sections.some((s) => s.name === 'dshbooster-lifecycle'))
   h.cleanup()
 })

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { classifyTask } from '../src/classifier.mjs'
 import { DriftProbe } from '../src/drift-probe.mjs'
@@ -80,11 +80,11 @@ export async function classifyWithLlm(ctx, agent, task, timeoutMs = 1200) {
 }
 
 function loadModules(names) {
-  return names.slice(0, 2).map((module) => ({
-    name: `j-space-${module}`,
-    text: readFileSync(fileURLToPath(new URL(`${module}.md`, moduleRoot)), 'utf8'),
-    order: 22
-  }))
+  return names.slice(0, 2).flatMap((module) => {
+    const file = fileURLToPath(new URL(`${module}.md`, moduleRoot))
+    if (!existsSync(file)) return []
+    return [{ name: `j-space-${module}`, text: readFileSync(file, 'utf8'), order: 22 }]
+  })
 }
 
 export function apply(ctx, config = {}) {

@@ -5,9 +5,10 @@ Eclipse Dshbooster is a DeepSeek Harness routing preset with a strict first-turn
 This package is the phase 1 router/J-Space implementation. The full routing-suite behavior also includes the controlled `dsh-super-injector` companion; that privileged component is integrated and activated separately, with its own provenance and verification.
 
 Version 0.3 adds an optional compatibility row for the latest Odyssey plugin
-bundle. Dshbooster keeps ownership of the router/J-Space lifecycle, while the
-bundle's own `@odyssey/dsh-adapter` provides its lightweight agent-plane
-execution tools. See `integrations/odyssey/README.md`.
+bundle. The integration is intentionally narrow: Dshbooster keeps ownership of
+the router/J-Space lifecycle, while the bundle's own `@odyssey/dsh-adapter`
+provides its lightweight agent-plane execution tools. See
+`integrations/odyssey/README.md`.
 
 ## Runtime contract
 
@@ -27,7 +28,7 @@ After promotion, the gate selects:
 | `full` | 2-4 steps, one verifiable deliverable | at most two named modules |
 | `loop` | multiple files/stages/turns/tools or durable state | `capacity` and `broadcast` |
 
-Untrusted retrieved or tool content forces `introspection` outside loop mode. Module prompt sections are loaded selectively, never as a concatenated suite, and are capped at two. The exact upstream J-Space tree is vendored under `vendor/j-space` at commit `885dc513702cc884f0b4fa07d24a27b2df5a1daf`; attribution and the fixed commit are in `vendor/j-space/UPSTREAM.json`.
+Untrusted retrieved or tool content forces `introspection` outside loop mode. Module prompt sections are loaded selectively, never as a concatenated suite, and are capped at two. The upstream J-Space commit is `885dc513702cc884f0b4fa07d24a27b2df5a1daf`; the runtime-required module `.md` files are committed under `vendor/j-space/j-space/modules/` so a fresh clone works out of the box, and missing module files degrade gracefully rather than crash the session.
 
 ## Durable state
 
@@ -64,8 +65,7 @@ The optional classifier reuses the session provider/model, runs with reasoning o
 
 ## Routing Suite companion
 
-The complete `dsh-routing-suite` source is vendored under
-`vendor/dsh-routing-suite` at suite commit
+The `dsh-routing-suite` source is referenced at suite commit
 `a09eb0ade28e6ec3b8e5eb22985a14f6bfa1fbe5`. It includes:
 
 - `dsh-router-standard` presets and tests
@@ -76,8 +76,12 @@ The complete `dsh-routing-suite` source is vendored under
 The main Eclipse Dshbooster bootstrap integrates the router and mode-boost
 behavior directly. The super-injector remains a separate companion component
 because it crosses a privileged runtime boundary; installation is explicit.
-Fixed component commits and scope are recorded in
-`vendor/dsh-routing-suite/UPSTREAM.json`.
+
+In this repository the source for the privileged `dsh-super-injector` is kept
+in a lightweight reference form under `vendor/dsh-routing-suite` for local
+provenance only (the public repo does not vendor the full injector, because
+activating it can load local code and mutate profile assembly). The pinned
+upstream commit is recorded in `vendor/dsh-routing-suite/UPSTREAM.json`.
 
 ## Verification
 
@@ -90,6 +94,10 @@ find src preset scripts test -type f \( -name '*.js' -o -name '*.mjs' \) -print0
 git diff --check
 ```
 
+The Odyssey integration is a composition check only. Its adapter behavior and
+wire contract are owned by the latest external bundle; this repository does
+not duplicate that worker or run a stale contract canary.
+
 The evaluation corpus is a wiring smoke test, not a production accuracy benchmark.
 
 ## Security boundary
@@ -101,3 +109,6 @@ explicitly requested isolated model calls. Activating the companion injector
 can load local code, create links, mutate profile package assembly, watch and
 reload packages, and rebuild plugin fibers. Treat that activation as a separate
 privileged installation step and test it in an isolated DSH home first.
+
+The Odyssey host-plane console/rebrand/restart/vision plugins remain opt-in.
+Do not silently append them to the default Dshbooster preset.
