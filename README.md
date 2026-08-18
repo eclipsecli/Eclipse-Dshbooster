@@ -1,112 +1,98 @@
 # Eclipse Dshbooster
 
-An experimental task classifier for DeepSeek Harness routing. It looks at what the user is asking for and picks a behavior mode.
+Eclipse Dshbooster is a DeepSeek Harness routing preset with a strict first-turn surface, durable one-time promotion, task-mode routing, and a selective J-Space cognition lifecycle.
 
-## How it works
+This package is the phase 1 router/J-Space implementation. The full routing-suite behavior also includes the controlled `dsh-super-injector` companion; that privileged component is integrated and activated separately, with its own provenance and verification.
 
-| Task type | Default mode | What it does |
-|-----------|-------------|--------------|
-| maintenance | spec | Understand, plan, then modify |
-| greenfield | react | Build, verify, fix |
-| broad greenfield | deep-react | Think architecture first, then converge and act |
-| research / audit | spec | Evidence-first, inspect-first |
-| mixed / low confidence | weak | Don't force a route, fall back to safe default |
+## Runtime contract
 
-## Why this design
+- `standard` is the default. The first request contains exactly the platform shell (`bash` or `pwsh`) and `str_replace_editor`, with the exact persona `You are a helpful software engineer assistant.` Other prompt contexts and management tools are hidden.
+- The first durable `session.events` entry whose type is `tool/call` promotes the session permanently. Promotion is persisted in workspace-local schema-v2 state, so reload and resume restore the full tool catalog.
+- `spec` keeps classified read-first/write-first routing for operators who need it. Maintenance, research, and audit route to `spec`; greenfield work routes to `react` or `deep-react`; mixed evidence uses the model-specific `weak` band.
+- Every real weak-band user message receives one deduplicated near-field guide. Rounds three and later force fresh classification. Simple work gets a commit guide; complex work gets depth guidance and a non-Flash closure guide.
+- Outside the dedicated preset, greeting-only sessions stand down. Existing router ownership also causes a no-op to avoid double injection.
 
-The first version uses weighted intent evidence instead of a simple keyword counter. It returns:
+## J-Space
 
-- label
-- mode
-- confidence
-- abstain flag
-- matched evidence phrases
-- per-class scores
-- conflict signals
+After promotion, the gate selects:
 
-When the request contains conflicting intents or the winning class has a thin margin, the classifier abstains. A wrong hard route costs more than falling back to a stable default while collecting a labeled example.
+| Pass | Use | Modules |
+| --- | --- | --- |
+| `fast` | one step, checkable at a glance | none |
+| `full` | 2-4 steps, one verifiable deliverable | at most two named modules |
+| `loop` | multiple files/stages/turns/tools or durable state | `capacity` and `broadcast` |
 
-## Project structure
+Untrusted retrieved or tool content forces `introspection` outside loop mode. Module prompt sections are loaded selectively, never as a concatenated suite, and are capped at two. The exact upstream J-Space tree is vendored under `vendor/j-space` at commit `885dc513702cc884f0b4fa07d24a27b2df5a1daf`; attribution and the fixed commit are in `vendor/j-space/UPSTREAM.json`.
 
-This package includes an experimental DSH preset entry (`agent.cordis.yml`) and a thin adapter under `preset/`. Copy the whole directory as one preset; the adapter imports the shared classifier core from `src/`. This is not a production installer.
+## Durable state
 
-The adapter does not select a model route or reasoning effort; those remain separate DSH session settings and must be verified independently.
+State defaults to `.router-state/<session-id>.json` in the session workspace and is written by temp-file plus atomic rename. Schema v2 retains Goal/Core/Verified/Open/Next, stable `vNN`/`oNN`/`cNN` identifiers, bounded history, phase, pass, route, active modules, promotion, mode override, and verification coverage. Schema v1 files migrate on read. Corrupt or unsupported files are rejected rather than silently reset.
 
-The router also keeps a small state file for each session. It records `Goal / Core / Verified / Open / Next`, the current phase, checkpoints, and verification results. Files are written atomically under `.router-state/` in the session workspace unless `stateDirectory` is set. Reasoning text is not stored.
+Compaction and resume events move the lifecycle to `recover`. A seam after a gap longer than 30 minutes also enters recovery. Recovery anchors reprint durable state and never persist or reconstruct private reasoning text.
 
-For an agent-oriented installation and verification procedure, see [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md). The guide is deliberately conservative: use an isolated DSH home first and inspect the first request before any production use.
+## Management tools
 
-## Run
+These tools are registered at startup but hidden until promotion:
 
-```bash
-npm test
-npm run eval
-npm run classify -- "排查当前项目启动时报错的原因，修复回归并运行测试。"
-```
+- `dshbooster_status`: effective route, promotion, pass/modules, state, and drift telemetry
+- `dshbooster_mode`: durable `auto/spec/weak/mixed/react/deep-react` override
+- `dshbooster_subagent`: fresh model call with an isolated mode persona; it does not mutate the parent route
+- `dshbooster_audit`: reports dense notation, marker leakage, unsupported verification claims, and repetition without rewriting text
+- `dshbooster_seam`, `dshbooster_resume`: persist seam history or force a full recovery re-entry anchor
+- `task_router_status`, `task_router_checkpoint`, `task_router_verification`: compatibility APIs retained after promotion
 
-For an isolated DSH test, copy this directory into the target preset workspace or install it according to the DSH version's local preset rules. Don't point it at a production DSH home until you've inspected the first-turn request, promotion event, and actual model route.
-
-The adapter's first version uses these routes:
-
-- **spec**: maintenance, research, and audit tasks
-- **react**: small or direct greenfield tasks
-- **deep-react**: broad greenfield architecture tasks
-- **weak**: mixed or low-confidence tasks, with the smallest first-turn surface
-
-## Optional LLM classifier
-
-The rule classifier is the default. The preset can optionally ask the same session route for a short classification call before the main request:
+## Configuration
 
 ```yaml
 - id: task-router-bootstrap
   name: ./preset/router-bootstrap.mjs
   config:
-    llmClassifier: 'ambiguous-only'
+    routerMode: standard       # standard | spec
+    dedicatedPreset: true
+    llmClassifier: off        # off | ambiguous-only | always
     llmTimeoutMs: 1200
     llmMinConfidence: 0.7
-    stateDirectory: '/path/to/durable/router-state'
+    # stateDirectory: /path/to/router-state
 ```
 
-Modes:
+The optional classifier reuses the session provider/model, runs with reasoning off, no tools, a short output cap, and a timeout. Invalid or low-confidence output falls back to the local classifier.
 
-- `off` (default): no extra model call
-- `ambiguous-only`: ask only when local classification abstains
-- `always`: ask for every first task
+## Routing Suite companion
 
-The optional call runs at most once per session, reuses the current session's provider, model, and stored credentials. It sends `reasoningEffort: 'off'`, a short output cap, and a timeout. A result below `llmMinConfidence` is ignored. It has no shell, filesystem, or web tools. Invalid JSON, timeout, or missing route falls back to the local result, whose ambiguous case remains weak. This option adds first-turn latency and should be measured before being enabled broadly.
+The complete `dsh-routing-suite` source is vendored under
+`vendor/dsh-routing-suite` at suite commit
+`a09eb0ade28e6ec3b8e5eb22985a14f6bfa1fbe5`. It includes:
 
-## Drift probe
+- `dsh-router-standard` presets and tests
+- `dsh-mode-boost` host plugin and routing core
+- `dsh-super-injector`, including runtime injection, install/reload, persistent
+  registry, watch/self-heal, scaffold/build/release, status, and client patch
 
-`src/drift-probe.mjs` exposes low-risk telemetry through `task_router_status`. It records only observable facts: tool-call count, assistant-message/chunk count, prompt assembly count, compaction/resume boundaries, expected mode, and missing-anchor or tool-surface mismatch signals. It does not retain reasoning text and does not claim to observe an internal chain-of-thought or expert route. A signal means "the externally observable contract changed," not "the model switched internal reasoning modes."
+The main Eclipse Dshbooster bootstrap integrates the router and mode-boost
+behavior directly. The super-injector remains a separate companion component
+because it crosses a privileged runtime boundary; installation is explicit.
+Fixed component commits and scope are recorded in
+`vendor/dsh-routing-suite/UPSTREAM.json`.
 
-## Task state and verification
+## Verification
 
-The first user task creates the state file and prompt anchor. The phase moves through `intake`, `plan`, `execute`, `verify`, and `recover` from explicit events and tool records:
+```bash
+npm test
+npm run eval
+npm run verify:jspace
+find vendor/dsh-routing-suite/preset/preset -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+find src preset scripts test -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+git diff --check
+```
 
-- `task_router_checkpoint` records active constraints, verified facts, open risks, the next action, and checkpoints.
-- `task_router_verification` declares completion requirements and records `passed`, `partial`, or `failed` results. A result record is rejected unless it names both the verifier and its coverage.
-- `task_router_status` returns the route, drift telemetry, ledger, and aggregate verification coverage.
+The evaluation corpus is a wiring smoke test, not a production accuracy benchmark.
 
-The first durable `tool/call` moves the phase to `execute`. Compaction and resume events move it to `recover`. A task is ready to finish only after at least one requirement has been declared and every requirement has a latest `passed` result.
+## Security boundary
 
-## Known issues
-
-- It's a rule-based v0, not a trained classifier.
-- The phrase lists are bilingual but incomplete.
-- It classifies the first user request only. Later events update lifecycle state, but they do not reclassify the route or inspect repository metadata.
-- There is no measured routing benefit yet. The next stage is a labeled task collection and held-out evaluation.
-- `deep-react` is a hypothesis-backed experimental target, not a production recommendation.
-
-## Testing feedback
-
-If you're testing this, please record:
-
-1. The original task text
-2. The classifier JSON result
-3. Whether the selected mode was actually used
-4. Task completion and acceptance-test result
-5. Whether a different mode would have been better
-
-Don't report wording like "We" or "Let me" as an ability score. The useful label is the task outcome.
-
-See `FEEDBACK.md` for a sanitized issue template. `examples/tasks.jsonl` is a development smoke corpus, not an independent benchmark; its score should not be advertised as real-world accuracy.
+The default Dshbooster preset does not install or activate the vendored
+super-injector. Its bootstrap only narrows/restores an assembled catalog,
+injects bounded prompt sections, writes workspace-local state, and makes
+explicitly requested isolated model calls. Activating the companion injector
+can load local code, create links, mutate profile package assembly, watch and
+reload packages, and rebuild plugin fibers. Treat that activation as a separate
+privileged installation step and test it in an isolated DSH home first.

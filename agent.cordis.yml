@@ -1,5 +1,4 @@
-# Experimental v0 preset. Copy this project directory as one preset so the
-# adapter can import the classifier core from src/classifier.mjs.
+# Eclipse Dshbooster dedicated preset. Copy this whole project directory.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
@@ -8,12 +7,16 @@
 - id: task-router-bootstrap
   name: ./preset/router-bootstrap.mjs
   config:
+    # standard: exact first request = platform shell + str_replace_editor.
+    # spec: classified read-first/write-first surface, still hiding management.
+    routerMode: 'standard'
+    dedicatedPreset: true
     # off | ambiguous-only | always. Uses the current session route with
     # reasoning disabled; no second API key is needed.
     llmClassifier: 'off'
     llmTimeoutMs: 1200
     llmMinConfidence: 0.7
-    # Optional. Defaults to .router-state in the session workspace.
+    # Optional. Schema-v2 state defaults to .router-state in the workspace.
     # stateDirectory: '/path/to/durable/router-state'
 
 - id: tool-bash

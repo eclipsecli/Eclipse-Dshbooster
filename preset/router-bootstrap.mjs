@@ -1,8 +1,23 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { classifyTask } from '../src/classifier.mjs'
 import { DriftProbe } from '../src/drift-probe.mjs'
 import {
+  MANAGEMENT_TOOLS,
+  RL_PERSONA,
+  auditOutgoing,
+  guideFor,
+  hasRouterOwner,
+  isChatTask,
+  modulePrompt,
+  parseMode,
+  personaFor,
+  selectJSpace
+} from '../src/protocol.mjs'
+import {
   advancePhase,
   loadRouterState,
+  recordSeam,
   renderStateAnchor,
   saveRouterState,
   updateCheckpoint,
@@ -10,15 +25,12 @@ import {
   verificationSummary
 } from '../src/router-state.mjs'
 
-export const name = 'task-router-bootstrap'
+export const name = 'eclipse-dshbooster'
 export const inject = ['systemPrompt', 'tools', 'llm']
 
-const PERSONAS = {
-  spec: 'You are a helpful software engineer assistant.',
-  react: 'You are a hands-on software engineer who delivers working output fast. Work directly: produce, verify, fix.',
-  'deep-react': 'You are a hands-on software engineer. Think deeply about architecture and edge cases, then commit and act. Produce, verify, fix.',
-  weak: 'You are a helpful software engineer assistant.'
-}
+const moduleRoot = new URL('../vendor/j-space/j-space/modules/', import.meta.url)
+const management = new Set(MANAGEMENT_TOOLS)
+const routerModes = new Set(['off', 'ambiguous-only', 'always'])
 
 function textFromEvent(data) {
   const payload = data?.message && typeof data.message === 'object' ? data.message : data
@@ -26,7 +38,7 @@ function textFromEvent(data) {
   return content.map((part) => typeof part === 'string' ? part : part?.text ?? '').join(' ')
 }
 
-function jsonSchema(parameters = {}) {
+function schema(parameters = {}) {
   const properties = {}
   const required = []
   for (const [key, value] of Object.entries(parameters)) {
@@ -36,48 +48,14 @@ function jsonSchema(parameters = {}) {
   return { type: 'object', properties, required, additionalProperties: false }
 }
 
-const ROUTER_MODES = new Set(['off', 'ambiguous-only', 'always'])
-const ROUTER_TOOLS = ['task_router_status', 'task_router_checkpoint', 'task_router_verification']
-
-function routerMode(config) {
-  const value = String(config?.llmClassifier ?? 'off').trim().toLowerCase()
-  return ROUTER_MODES.has(value) ? value : 'off'
-}
-
 function parseClassifierJson(text) {
   const match = String(text).match(/\{[\s\S]*\}/)
   if (!match) return null
   try {
     const value = JSON.parse(match[0])
-    if (!['spec', 'react', 'deep-react', 'weak'].includes(value.mode)) return null
-    if (typeof value.confidence !== 'number') return null
+    if (!['spec', 'react', 'deep-react', 'weak', 'mixed'].includes(value.mode) || typeof value.confidence !== 'number') return null
     return value
   } catch { return null }
-}
-
-function currentAgent(ctx, agents) {
-  return ctx.get('agent') ?? [...agents.values()].at(-1)
-}
-
-function stateConfig(session, config) {
-  if (config.stateDirectory) return config
-  const cwd = session?.header?.cwd
-  return cwd ? { ...config, stateDirectory: `${cwd}/.router-state` } : config
-}
-
-function stateFor(session, states, config, seed = {}) {
-  if (!session) return null
-  if (!states.has(session.id)) {
-    states.set(session.id, loadRouterState(session.id, stateConfig(session, config), seed))
-  }
-  return states.get(session.id)
-}
-
-function persistState(session, states, config, value) {
-  if (!session || !value) return value
-  const saved = saveRouterState(value, stateConfig(session, config))
-  states.set(session.id, saved)
-  return saved
 }
 
 export async function classifyWithLlm(ctx, agent, task, timeoutMs = 1200) {
@@ -89,55 +67,97 @@ export async function classifyWithLlm(ctx, agent, task, timeoutMs = 1200) {
   let output = ''
   try {
     const stream = ctx.llm.stream({
-      provider,
-      model,
-      reasoningEffort: 'off',
-      maxTokens: 160,
-      temperature: 0,
-      system: 'Classify the task. Return JSON only: {"mode":"spec|react|deep-react|weak","confidence":0.0,"reason":"short"}. Never explain.',
-      messages: [{ role: 'user', content: [{ type: 'text', text: task }] }],
-      signal: controller.signal
+      provider, model, reasoningEffort: 'off', maxTokens: 160, temperature: 0,
+      system: 'Classify the task. Return JSON only: {"mode":"spec|react|deep-react|weak|mixed","confidence":0.0,"reason":"short"}.',
+      messages: [{ role: 'user', content: [{ type: 'text', text: task }] }], signal: controller.signal
     })
     for await (const chunk of stream) {
       if (chunk.type === 'text-delta') output += chunk.text
       if (output.length > 1200) break
     }
     return parseClassifierJson(output)
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
+  } catch { return null } finally { clearTimeout(timer) }
+}
+
+function loadModules(names) {
+  return names.slice(0, 2).map((module) => ({
+    name: `j-space-${module}`,
+    text: readFileSync(fileURLToPath(new URL(`${module}.md`, moduleRoot)), 'utf8'),
+    order: 22
+  }))
 }
 
 export function apply(ctx, config = {}) {
   const classifications = new Map()
-  const llmClassifications = new Map()
-  const agents = new Map()
-  const firstUserText = new Map()
-  const probes = new Map()
+  const firstTexts = new Map()
   const states = new Map()
-  const llmMode = routerMode(config)
+  const agents = new Map()
+  const probes = new Map()
+  const guided = new Map()
+  const guidedEvents = new WeakSet()
+  const inactive = new Set()
+  const chat = new Set()
+  const llmResults = new Map()
+  const llmMode = routerModes.has(config.llmClassifier) ? config.llmClassifier : 'off'
+  const runtimeMode = config.routerMode === 'spec' ? 'spec' : 'standard'
+  const dedicatedPreset = config.dedicatedPreset !== false
+
+  const stateConfig = (session) => config.stateDirectory
+    ? config
+    : session?.header?.cwd ? { ...config, stateDirectory: `${session.header.cwd}/.router-state` } : config
+
+  function stateFor(session, seed = {}) {
+    if (!states.has(session.id)) states.set(session.id, loadRouterState(session.id, stateConfig(session), seed))
+    return states.get(session.id)
+  }
+
+  function persist(session, state) {
+    const saved = saveRouterState(state, stateConfig(session))
+    states.set(session.id, saved)
+    return saved
+  }
+
+  function routeFor(session, modelId) {
+    const state = stateFor(session)
+    const classified = classifications.get(session.id) || state.route || classifyTask(firstTexts.get(session.id) || '')
+    const mode = state.modeOverride || classified.mode || 'weak'
+    return { classified, mode, persona: personaFor(mode, modelId) }
+  }
 
   ctx.on('session/event', (session, event) => {
-    const probe = probes.get(session.id) ?? new DriftProbe()
+    const probe = probes.get(session.id) || new DriftProbe()
     probes.set(session.id, probe)
     probe.observeEvent(event)
-    const current = stateFor(session, states, config, {
-      task: firstUserText.get(session.id) ?? '',
-      classification: classifications.get(session.id) ?? null
-    })
+    const current = stateFor(session, { task: firstTexts.get(session.id) || '', classification: classifications.get(session.id) || null })
     const advanced = advancePhase(current, event?.type)
-    if (advanced !== current) persistState(session, states, config, advanced)
-    if (event.type !== 'user/message' || event.data?.source?.kind !== 'user') return
+    if (advanced !== current) persist(session, advanced)
+
+    if (event?.type !== 'user/message' || event.data?.source?.kind !== 'user') return
     const text = textFromEvent(event.data).trim()
-    if (!text || firstUserText.has(session.id)) return
-    firstUserText.set(session.id, text)
-    const classification = classifyTask(text)
-    classifications.set(session.id, classification)
-    const state = stateFor(session, states, config, { task: text, classification })
-    persistState(session, states, config, { ...state, task: text, goal: text, route: classification, next: 'Assemble the route and choose the first bounded action.' })
-    probe.setExpectedMode(classifications.get(session.id).mode)
+    if (!text) return
+    if (guidedEvents.has(event)) return
+    if (!firstTexts.has(session.id)) firstTexts.set(session.id, text)
+    const round = (session.events || []).filter((item) => item.type === 'user/message' && item.data?.source?.kind === 'user').length || 1
+    if (!classifications.has(session.id) || round >= 3) classifications.set(session.id, classifyTask(text))
+    const classification = classifications.get(session.id)
+    let next = stateFor(session, { task: text, classification })
+    if (!next.task) next = { ...next, task: text, goal: text, route: classification, phase: 'plan', next: 'Choose the first bounded action.' }
+    else if (round >= 3) next = { ...next, route: classification }
+    persist(session, next)
+
+    if (inactive.has(session.id) || chat.has(session.id)) return
+    const target = ctx.get('agent')?.session === session ? ctx.get('agent') : agents.get(session.id)
+    const mode = next.modeOverride || classification.mode
+    if (mode !== 'weak' || !target?.inbox || (event.id !== undefined && guided.get(session.id) === event.id)) return
+    try {
+      target.inbox.append('next-step', {
+        id: `dshbooster-guide-${event.id || `${round}-${Date.now()}`}`,
+        role: 'user', source: { kind: 'plugin', plugin: name },
+        content: [{ type: 'text', text: guideFor(round, text, target.options?.model) }]
+      })
+      guidedEvents.add(event)
+      if (event.id !== undefined) guided.set(session.id, event.id)
+    } catch { /* inbox races are harmless; a later assembly still carries the route */ }
   })
 
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
@@ -147,144 +167,175 @@ export function apply(ctx, config = {}) {
     const session = agent.session
     agents.set(session.id, agent)
 
-    let classification = classifications.get(session.id) ?? classifyTask(firstUserText.get(session.id) ?? '')
-    const shouldAskLlm = llmMode === 'always' || (llmMode === 'ambiguous-only' && classification.abstain)
-    if (shouldAskLlm && !llmClassifications.has(session.id)) {
-      const refined = await classifyWithLlm(ctx, agent, firstUserText.get(session.id) ?? '', config.llmTimeoutMs ?? 1200)
-      llmClassifications.set(session.id, refined)
-    }
-    const refined = llmClassifications.get(session.id)
-    if (refined && refined.confidence >= (config.llmMinConfidence ?? 0.7)) {
-      classification = {
-        ...classification,
-        ...refined,
-        abstain: false,
-        source: 'llm-off'
-      }
-    }
-    classifications.set(session.id, classification)
-    let state = stateFor(session, states, config, { task: firstUserText.get(session.id) ?? '', classification })
-    state = persistState(session, states, config, { ...state, route: classification, phase: state.phase === 'intake' ? 'plan' : state.phase, next: state.next || 'Choose the first bounded action.' })
-    const probe = probes.get(session.id) ?? new DriftProbe()
-    probes.set(session.id, probe)
-    probe.setExpectedMode(classification.mode)
-
-    const hasToolCall = session.events.some((event) => event.type === 'tool/call')
-    if (hasToolCall) {
-      probe.observeAssembly({ mode: classification.mode, hasPersona: true, hasExpectedTools: true, promoted: true })
+    if (hasRouterOwner(assembled)) {
+      inactive.add(session.id)
       return assembled
     }
+    inactive.delete(session.id)
 
+    const firstText = firstTexts.get(session.id) || textFromEvent(session.events?.find((event) => event.type === 'user/message')?.data)
+    if (!dedicatedPreset && isChatTask(firstText)) {
+      chat.add(session.id)
+      return assembled
+    }
+    chat.delete(session.id)
+
+    let classification = classifications.get(session.id) || classifyTask(firstText)
+    const askLlm = llmMode === 'always' || (llmMode === 'ambiguous-only' && classification.abstain)
+    if (askLlm && !llmResults.has(session.id)) llmResults.set(session.id, await classifyWithLlm(ctx, agent, firstText, config.llmTimeoutMs || 1200))
+    const refined = llmResults.get(session.id)
+    if (refined?.confidence >= (config.llmMinConfidence ?? 0.7)) classification = { ...classification, ...refined, abstain: false, source: 'llm-off' }
+    classifications.set(session.id, classification)
+
+    let state = stateFor(session, { task: firstText, classification })
+    const promoted = session.events?.some((event) => event.type === 'tool/call') || state.promoted
+    if (promoted !== state.promoted) state = persist(session, { ...state, promoted })
+    const mode = state.modeOverride || classification.mode || 'weak'
+    const persona = runtimeMode === 'standard' && !promoted ? RL_PERSONA : personaFor(mode, agent.options?.model)
     const available = new Set(assembled.tools.map((tool) => tool.name))
     const shell = available.has('pwsh') ? 'pwsh' : available.has('bash') ? 'bash' : null
     if (!shell) throw new Error(`${name}: no platform shell in catalog`)
 
-    const core = new Set([shell, ...ROUTER_TOOLS])
-    if (classification.mode === 'spec') {
-      for (const tool of ['read', 'edit', 'glob', 'grep']) core.add(tool)
-    } else if (classification.mode === 'react' || classification.mode === 'deep-react') {
-      for (const tool of ['read', 'write', 'edit']) core.add(tool)
-    } else {
-      core.add(available.has('str_replace_editor') ? 'str_replace_editor' : 'edit')
+    if (!promoted && runtimeMode === 'standard') {
+      const editor = available.has('str_replace_editor') ? 'str_replace_editor' : null
+      if (!editor) throw new Error(`${name}: str_replace_editor missing from catalog`)
+      const routed = {
+        ...assembled,
+        contexts: [],
+        sections: [{ name: 'dshbooster-persona', text: RL_PERSONA, order: 0 }],
+        tools: assembled.tools.filter((tool) => tool.name === shell || tool.name === editor)
+      }
+      probes.get(session.id)?.observeAssembly({ mode, hasPersona: true, hasExpectedTools: routed.tools.length === 2, promoted: false })
+      return routed
     }
 
-    const persona = PERSONAS[classification.mode] ?? PERSONAS.weak
-    const sections = (assembled.sections ?? []).filter((section) => !/persona/i.test(section.name))
-    if (classification.mode !== 'weak') sections.push({ name: 'task-router-ledger', text: renderStateAnchor(state), order: -1 })
-    sections.push({ name: 'task-router-persona', text: persona, order: 0 })
-    const routed = {
-      ...assembled,
-      sections,
-      contexts: [],
-      tools: assembled.tools.filter((tool) => core.has(tool.name))
+    const carriesUntrustedOutput = session.events?.some((event) => ['tool/result', 'tool/output', 'retrieval/result'].includes(event.type))
+    const gate = selectJSpace({ text: firstText, pass: state.pass === 'loop' ? 'loop' : undefined, toolOutput: carriesUntrustedOutput })
+    state = persist(session, { ...state, route: classification, pass: gate.pass, activeModules: gate.modules, phase: state.phase === 'intake' ? 'plan' : state.phase })
+    const sections = (assembled.sections || []).filter((section) => !/persona|j-space|dshbooster/i.test(section.name))
+    sections.push({ name: 'dshbooster-persona', text: persona, order: 0 })
+    sections.push({ name: 'dshbooster-protocol', text: modulePrompt(gate), order: 20 })
+    sections.push(...loadModules(gate.modules))
+    sections.push({ name: 'dshbooster-lifecycle', text: renderStateAnchor(state), order: 25 })
+
+    if (promoted) {
+      probes.get(session.id)?.observeAssembly({ mode, hasPersona: true, hasExpectedTools: true, promoted: true })
+      return { ...assembled, sections, contexts: [] }
     }
-    probe.observeAssembly({
-      mode: classification.mode,
-      hasPersona: routed.sections.some((section) => section.name === 'task-router-persona'),
-      hasExpectedTools: routed.tools.some((tool) => core.has(tool.name)),
-      promoted: false
-    })
+
+    const allowed = new Set([shell])
+    if (mode === 'spec') ['read', 'edit', 'glob', 'grep'].forEach((tool) => allowed.add(tool))
+    else if (mode === 'mixed') ['read', 'write', 'edit', 'glob', 'grep'].forEach((tool) => allowed.add(tool))
+    else ['read', 'write', 'edit'].forEach((tool) => allowed.add(tool))
+    const routed = { ...assembled, sections, contexts: [], tools: assembled.tools.filter((tool) => allowed.has(tool.name) && !management.has(tool.name)) }
+    probes.get(session.id)?.observeAssembly({ mode, hasPersona: true, hasExpectedTools: routed.tools.length > 0, promoted: false })
     return routed
   })
 
-  const registerTool = (tool) => ctx.effect(() => ctx.tools.register({
-    ...tool,
-    parameters: jsonSchema(tool.parameters)
-  }))
+  const currentAgent = () => ctx.get('agent') || [...agents.values()].at(-1)
+  const currentSession = () => currentAgent()?.session
+  const register = (tool) => ctx.effect(() => ctx.tools.register({ ...tool, parameters: schema(tool.parameters) }))
+  const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] }
 
-  registerTool({
-    name: 'task_router_status',
-    description: 'Show task routing, lifecycle phase, durable ledger, and verification coverage.',
-    parameters: {},
-    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+  function status() {
+    const session = currentSession()
+    if (!session) return 'dshbooster: no active session'
+    const state = stateFor(session)
+    const route = routeFor(session, currentAgent()?.options?.model)
+    return JSON.stringify({ protocol: 'eclipse-dshbooster', schemaVersion: state.schemaVersion, routerMode: runtimeMode, classification: route.classified, effectiveMode: route.mode, override: state.modeOverride, promoted: state.promoted || session.events.some((event) => event.type === 'tool/call'), pass: state.pass, activeModules: state.activeModules, ledger: state, verification: verificationSummary(state), driftProbe: probes.get(session.id)?.snapshot() || null }, null, 2)
+  }
+
+  register({ name: 'dshbooster_status', description: 'Show the effective route, promotion, J-Space pass/modules, lifecycle state, and verification coverage.', parameters: {}, output, execute: status })
+  register({ name: 'task_router_status', description: 'Compatibility alias for dshbooster_status.', parameters: {}, output, execute: status })
+
+  register({
+    name: 'dshbooster_mode', description: 'Set a durable session mode override, or auto to clear it.',
+    parameters: { mode: { type: 'string', required: true, description: 'auto, spec, weak, mixed, react, or deep-react' } }, output,
+    execute(args = {}) {
+      const session = currentSession()
+      if (!session) return 'dshbooster: no active session'
+      const parsed = parseMode(args.mode)
+      if (!parsed) return `invalid mode "${args.mode}"`
+      const state = stateFor(session)
+      persist(session, { ...state, modeOverride: parsed === 'auto' ? null : parsed })
+      return `mode=${parsed === 'auto' ? state.route?.mode || 'weak' : parsed}; override=${parsed === 'auto' ? 'no' : 'yes'}; next request applies`
+    }
+  })
+
+  register({
+    name: 'dshbooster_subagent', description: 'Run a task in a fresh, mode-isolated model context without mutating this session route.',
+    parameters: { mode: { type: 'string', required: true, description: 'spec, weak, mixed, react, or deep-react' }, task: { type: 'string', required: true, description: 'isolated task' }, maxTokens: { type: 'number', description: 'output cap; default 1024' } }, output,
+    async execute(args = {}) {
+      const parsed = parseMode(args.mode)
+      if (!parsed || parsed === 'auto') return `invalid mode "${args.mode}"`
+      const agent = currentAgent()
+      if (!agent?.options?.provider || !agent.options.model) return 'dshbooster: no active model route'
+      let text = ''
+      let reasoningChars = 0
+      try {
+        const stream = ctx.llm.stream({ provider: agent.options.provider, model: agent.options.model, system: personaFor(parsed, agent.options.model), messages: [{ role: 'user', content: [{ type: 'text', text: String(args.task || '') }] }], maxTokens: Number(args.maxTokens || 1024) })
+        for await (const chunk of stream) {
+          if (chunk.type === 'text-delta') text += chunk.text
+          if (chunk.type === 'reasoning-delta') reasoningChars += chunk.text.length
+        }
+      } catch (error) { return `subagent error: ${error?.message || String(error)}` }
+      return `[mode-subagent ${parsed} | reasoning ${reasoningChars} chars]\n${text.slice(0, 3000)}${text.length > 3000 ? '\n...(truncated)' : ''}`
+    }
+  })
+
+  register({
+    name: 'dshbooster_audit', description: 'Audit outgoing text for register leakage, unsupported verification claims, and repetition; never rewrites it.',
+    parameters: { text: { type: 'string', required: true, description: 'candidate outgoing text' } }, output,
+    execute(args = {}) { return JSON.stringify(auditOutgoing(args.text), null, 2) }
+  })
+
+  register({
+    name: 'dshbooster_seam', description: 'Record a durable lifecycle seam and return the refreshed anchor.',
+    parameters: { reason: { type: 'string', description: 'why this seam matters' } }, output,
+    execute(args = {}) {
+      const session = currentSession()
+      if (!session) return 'dshbooster: no active session'
+      const state = persist(session, recordSeam(stateFor(session), String(args.reason || 'seam')))
+      return renderStateAnchor(state)
+    }
+  })
+
+  register({
+    name: 'dshbooster_resume', description: 'Enter recovery explicitly and return a full durable re-entry anchor.',
+    parameters: {}, output,
     execute() {
-      const agent = currentAgent(ctx, agents)
-      const session = agent?.session
-      if (!session) return 'task-router: no active session'
-      const classification = classifications.get(session.id) ?? classifyTask(firstUserText.get(session.id) ?? '')
-      const state = stateFor(session, states, config, { task: firstUserText.get(session.id) ?? '', classification })
-      return JSON.stringify({
-        classifier: 'dsh-task-router-v0',
-        task: firstUserText.get(session.id) ?? '',
-        classification,
-        llmClassifier: llmMode,
-        driftProbe: probes.get(session.id)?.snapshot() ?? null,
-        ledger: state,
-        verification: verificationSummary(state)
-      }, null, 2)
+      const session = currentSession()
+      if (!session) return 'dshbooster: no active session'
+      const state = persist(session, recordSeam({ ...stateFor(session), phase: 'recover' }, 'resume'))
+      return renderStateAnchor(state, { longGap: true })
     }
   })
 
-  registerTool({
-    name: 'task_router_checkpoint',
-    description: 'Persist the task ledger at a seam. Record only observed facts, the next bounded action, and optional verification evidence.',
-    parameters: {
-      phase: { type: 'string', description: 'intake, plan, execute, verify, or recover' },
-      goal: { type: 'string', description: 'current task goal' },
-      core: { type: 'string', description: 'one load-bearing constraint or active item' },
-      verified: { type: 'string', description: 'one fact already verified' },
-      open: { type: 'string', description: 'one unresolved question or risk' },
-      next: { type: 'string', description: 'first next bounded action' },
-      checkpoint: { type: 'string', description: 'what changed or why this seam matters' }
-    },
-    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+  register({
+    name: 'task_router_checkpoint', description: 'Persist a compatibility lifecycle checkpoint at a seam.',
+    parameters: { phase: { type: 'string', description: 'intake, plan, execute, verify, or recover' }, goal: { type: 'string', description: 'goal' }, core: { type: 'string', description: 'load-bearing constraint' }, verified: { type: 'string', description: 'verified fact' }, open: { type: 'string', description: 'open question' }, settledBy: { type: 'string', description: 'cheapest refuting test for the open question' }, next: { type: 'string', description: 'next bounded action' }, checkpoint: { type: 'string', description: 'seam note' } }, output,
     execute(args = {}) {
-      const agent = currentAgent(ctx, agents)
-      const session = agent?.session
-      if (!session) return 'task-router: no active session'
+      const session = currentSession()
+      if (!session) return 'dshbooster: no active session'
       try {
-        const current = stateFor(session, states, config, { task: firstUserText.get(session.id) ?? '', classification: classifications.get(session.id) ?? null })
-        const updated = persistState(session, states, config, updateCheckpoint(current, args))
-        return JSON.stringify({ ok: true, phase: updated.phase, next: updated.next, checkpointCount: updated.checkpoints.length }, null, 2)
-      } catch (error) {
-        return JSON.stringify({ ok: false, error: error.message }, null, 2)
-      }
+        let state = updateCheckpoint(stateFor(session), args)
+        state = recordSeam(state, args.checkpoint || 'checkpoint')
+        state = persist(session, state)
+        return JSON.stringify({ ok: true, phase: state.phase, next: state.next, checkpointCount: state.checkpoints.length }, null, 2)
+      } catch (error) { return JSON.stringify({ ok: false, error: error.message }, null, 2) }
     }
   })
 
-  registerTool({
-    name: 'task_router_verification',
-    description: 'Declare a completion requirement or record a verifier result with explicit coverage and evidence.',
-    parameters: {
-      action: { type: 'string', description: 'declare or record' },
-      item: { type: 'string', description: 'verification requirement or item name' },
-      result: { type: 'string', description: 'passed, partial, or failed when recording' },
-      verifier: { type: 'string', description: 'command, test, inspection, or other verifier' },
-      coverage: { type: 'string', description: 'what the verifier covered' },
-      evidence: { type: 'string', description: 'short evidence reference' }
-    },
-    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+  register({
+    name: 'task_router_verification', description: 'Declare a completion requirement or record verifier coverage.',
+    parameters: { action: { type: 'string', description: 'declare or record' }, item: { type: 'string', description: 'verification item' }, result: { type: 'string', description: 'passed, partial, or failed' }, verifier: { type: 'string', description: 'verifier' }, coverage: { type: 'string', description: 'coverage' }, evidence: { type: 'string', description: 'evidence' } }, output,
     execute(args = {}) {
-      const agent = currentAgent(ctx, agents)
-      const session = agent?.session
-      if (!session) return 'task-router: no active session'
+      const session = currentSession()
+      if (!session) return 'dshbooster: no active session'
       try {
-        const current = stateFor(session, states, config, { task: firstUserText.get(session.id) ?? '', classification: classifications.get(session.id) ?? null })
-        const updated = persistState(session, states, config, updateVerification(current, args))
-        return JSON.stringify({ ok: true, verification: verificationSummary(updated), phase: updated.phase }, null, 2)
-      } catch (error) {
-        return JSON.stringify({ ok: false, error: error.message }, null, 2)
-      }
+        const state = persist(session, updateVerification(stateFor(session), args))
+        return JSON.stringify({ ok: true, phase: state.phase, verification: verificationSummary(state) }, null, 2)
+      } catch (error) { return JSON.stringify({ ok: false, error: error.message }, null, 2) }
     }
   })
 }

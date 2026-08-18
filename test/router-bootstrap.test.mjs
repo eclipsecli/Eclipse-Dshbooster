@@ -5,200 +5,150 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { apply, classifyWithLlm } from '../preset/router-bootstrap.mjs'
 
+const allToolNames = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'str_replace_editor', 'web_search', 'dshbooster_status', 'dshbooster_mode', 'dshbooster_subagent', 'dshbooster_audit', 'task_router_status', 'task_router_checkpoint', 'task_router_verification']
+const assembled = { sections: [{ name: 'persona', text: 'host persona' }, { name: 'plan-mode', text: 'host plan' }], contexts: [{ source: 'host' }], tools: allToolNames.map((name) => ({ name })) }
+
+test('shipped preset scopes router settings to the bootstrap row', () => {
+  const preset = readFileSync(new URL('../agent.cordis.yml', import.meta.url), 'utf8')
+  const persona = preset.slice(preset.indexOf('- id: persona'), preset.indexOf('- id: task-router-bootstrap'))
+  const bootstrap = preset.slice(preset.indexOf('- id: task-router-bootstrap'), preset.indexOf('- id: tool-bash'))
+  assert.doesNotMatch(persona, /routerMode|dedicatedPreset/)
+  assert.match(bootstrap, /routerMode: 'standard'/)
+  assert.match(bootstrap, /dedicatedPreset: true/)
+})
+
 function harness(config = {}, chunks = []) {
-  const hasStateDirectory = Object.hasOwn(config, 'stateDirectory')
-  const stateDirectory = hasStateDirectory ? config.stateDirectory : mkdtempSync(join(tmpdir(), 'dsh-router-state-'))
-  config = { ...config }
-  if (stateDirectory) config.stateDirectory = stateDirectory
-  else delete config.stateDirectory
+  const stateDirectory = config.stateDirectory || mkdtempSync(join(tmpdir(), 'dshbooster-'))
   const handlers = new Map()
   const registered = []
-  const session = { id: 's1', events: [] }
-  const agent = { session, options: { provider: 'deepseek-official', model: 'deepseek-v4-pro' } }
+  const appended = []
+  const session = { id: config.sessionId || 's1', events: [], header: { cwd: stateDirectory } }
+  const agent = { session, options: { provider: 'deepseek-official', model: config.model || 'deepseek-v4-pro' }, inbox: { append(kind, value) { appended.push({ kind, value }) } } }
   const ctx = {
     tools: { register(tool) { registered.push(tool); return () => {} } },
-    on(name, fn) { handlers.set(name, fn) },
-    effect(fn) { return fn() },
+    on(name, fn) { handlers.set(name, fn) }, effect(fn) { return fn() },
     get(name) { return name === 'agent' ? agent : undefined },
-    llm: {
-      stream(options) {
-        ctx.llmCalls = (ctx.llmCalls ?? 0) + 1
-        ctx.lastLlmOptions = options
-        return (async function* () { for (const chunk of chunks) yield chunk })()
-      }
-    }
+    llm: { stream(options) { ctx.lastLlmOptions = options; return (async function* () { for (const chunk of chunks) yield chunk })() } }
   }
-  apply(ctx, config)
-  return {
-    handlers,
-    registered,
-    session,
-    agent,
-    ctx,
-    stateDirectory,
-    cleanup: () => { if (stateDirectory) rmSync(stateDirectory, { recursive: true, force: true }) }
-  }
+  apply(ctx, { ...config, stateDirectory })
+  const event = (value) => { session.events.push(value); handlers.get('session/event')(session, value) }
+  const assemble = (value = assembled) => handlers.get('system-prompt/assemble')({}, { agent }, async () => value)
+  return { handlers, registered, appended, session, agent, ctx, stateDirectory, event, assemble, cleanup: () => rmSync(stateDirectory, { recursive: true, force: true }) }
 }
 
-function workspaceHarness(chunks = []) {
-  const cwd = mkdtempSync(join(tmpdir(), 'dsh-router-workspace-'))
-  const h = harness({ stateDirectory: null }, chunks)
-  h.agent.session.header = { cwd }
-  h.stateDirectory = join(cwd, '.router-state')
-  h.cleanup = () => rmSync(cwd, { recursive: true, force: true })
-  return h
-}
-
-const assembled = {
-  sections: [{ name: 'persona', text: 'default' }, { name: 'plan-mode', text: 'keep' }],
-  contexts: [{ source: 'runtime' }],
-  tools: ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'str_replace_editor', 'web_search',
-    'task_router_status', 'task_router_checkpoint', 'task_router_verification']
-    .map((name) => ({ name }))
-}
-
-const routerTools = ['task_router_status', 'task_router_checkpoint', 'task_router_verification']
-
-test('applies maintenance classification before the first tool call', async () => {
+test('standard first request exposes exactly shell and str_replace_editor with exact RL persona', async () => {
   const h = harness()
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '修复当前项目的启动错误' }] }
-  })
-  const result = await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['bash', 'read', 'edit', 'glob', 'grep', ...routerTools])
-  assert.match(result.sections.at(-1).text, /helpful software engineer/)
-  assert.match(result.sections.find((section) => section.name === 'task-router-ledger').text, /Phase: plan/)
-  assert.equal(result.contexts.length, 0)
+  h.event({ id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '修复当前项目错误' }] } })
+  const result = await h.assemble()
+  assert.deepEqual(result.tools.map((tool) => tool.name), ['bash', 'str_replace_editor'])
+  assert.deepEqual(result.sections, [{ name: 'dshbooster-persona', text: 'You are a helpful software engineer assistant.', order: 0 }])
+  assert.deepEqual(result.contexts, [])
   h.cleanup()
 })
 
-test('applies greenfield classification and exposes status evidence', async () => {
+test('management tools are registered but hidden before promotion, then full catalog returns', async () => {
   const h = harness()
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '从零创建一个网页小游戏' }] }
-  })
-  const result = await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['bash', 'read', 'write', 'edit', ...routerTools])
+  assert.ok(h.registered.some((tool) => tool.name === 'dshbooster_mode'))
+  assert.ok(h.registered.some((tool) => tool.name === 'task_router_status'))
+  assert.deepEqual((await h.assemble()).tools.map((tool) => tool.name), ['bash', 'str_replace_editor'])
+  h.event({ id: 't1', type: 'tool/call', data: { name: 'bash' } })
+  const promoted = await h.assemble()
+  assert.deepEqual(promoted.tools.map((tool) => tool.name), allToolNames)
+  assert.ok(promoted.sections.some((section) => section.name === 'dshbooster-lifecycle'))
+  h.cleanup()
+})
+
+test('promotion is durable across plugin reload and absent session event history', async () => {
+  const h1 = harness()
+  h1.event({ id: 't1', type: 'tool/call', data: { name: 'bash' } })
+  await h1.assemble()
+  const h2 = harness({ stateDirectory: h1.stateDirectory, sessionId: 's1' })
+  const result = await h2.assemble()
+  assert.deepEqual(result.tools.map((tool) => tool.name), allToolNames)
+  h2.cleanup()
+})
+
+test('spec router mode keeps read-first routing while hiding management before promotion', async () => {
+  const h = harness({ routerMode: 'spec' })
+  h.event({ id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '修复当前项目错误' }] } })
+  const result = await h.assemble()
+  assert.deepEqual(result.tools.map((tool) => tool.name), ['bash', 'read', 'edit', 'glob', 'grep'])
+  assert.equal(result.tools.some((tool) => tool.name.startsWith('dshbooster_')), false)
+  h.cleanup()
+})
+
+test('weak guidance is deduplicated and rounds three plus force fresh classification text', () => {
+  const h = harness()
+  const one = { id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我看看这个' }] } }
+  h.event(one)
+  h.handlers.get('session/event')(h.session, one)
+  h.event({ id: 'u2', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '再看看' }] } })
+  h.event({ id: 'u3', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '新的事情' }] } })
+  assert.equal(h.appended.length, 3)
+  assert.match(h.appended[2].value.content[0].text, /new task/i)
+  h.cleanup()
+})
+
+test('weak guidance handles and deduplicates an event without an id', () => {
+  const h = harness()
+  const event = { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我看看这个' }] } }
+  h.event(event)
+  h.handlers.get('session/event')(h.session, event)
+  assert.equal(h.appended.length, 1)
+  h.cleanup()
+})
+
+test('chat stands down outside dedicated preset and coexistence guard avoids double injection', async () => {
+  const chat = harness({ dedicatedPreset: false })
+  chat.event({ id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你好' }] } })
+  assert.equal(await chat.assemble(), assembled)
+  chat.cleanup()
+  const owner = harness()
+  const owned = { ...assembled, sections: [...assembled.sections, { name: 'router-persona', text: 'owner' }], tools: [...assembled.tools, { name: 'dev_router_status' }] }
+  assert.equal(await owner.assemble(owned), owned)
+  owner.cleanup()
+})
+
+test('mode override persists, status exposes it, and compatibility tools remain callable', async () => {
+  const h = harness()
+  h.event({ id: 't1', type: 'tool/call', data: { name: 'bash' } })
+  await h.assemble()
+  const mode = h.registered.find((tool) => tool.name === 'dshbooster_mode')
+  assert.match(mode.execute({ mode: 'react' }), /override=yes/)
   const status = h.registered.find((tool) => tool.name === 'task_router_status')
-  const payload = JSON.parse(status.execute())
-  assert.equal(payload.classification.label, 'greenfield')
-  assert.equal(payload.classification.mode, 'react')
-  assert.equal(payload.ledger.goal, '从零创建一个网页小游戏')
-  assert.equal(payload.ledger.phase, 'plan')
-  h.cleanup()
-})
-
-test('restores the full assembled surface after a durable tool call', async () => {
-  const h = harness()
-  h.session.events.push({ type: 'tool/call' })
-  const result = await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  assert.equal(result, assembled)
-  h.cleanup()
-})
-
-test('optional classifier reuses the route with reasoning off', async () => {
-  const chunks = [{ type: 'text-delta', text: '{"mode":"spec","confidence":0.91,"reason":"existing code"}' }]
-  const h = harness({ llmClassifier: 'ambiguous-only', llmTimeoutMs: 500 }, chunks)
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我看看这个' }] }
-  })
-  const result = await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  assert.equal(h.ctx.lastLlmOptions.provider, 'deepseek-official')
-  assert.equal(h.ctx.lastLlmOptions.model, 'deepseek-v4-pro')
-  assert.equal(h.ctx.lastLlmOptions.reasoningEffort, 'off')
-  assert.equal(h.ctx.lastLlmOptions.maxTokens, 160)
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['bash', 'read', 'edit', 'glob', 'grep', ...routerTools])
-  await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  assert.equal(h.ctx.llmCalls, 1)
-  h.cleanup()
-})
-
-test('invalid LLM classification falls back to weak', async () => {
-  const agent = { options: { provider: 'deepseek-official', model: 'deepseek-v4-pro' } }
-  const ctx = { llm: { stream: () => (async function* () { yield { type: 'text-delta', text: 'not json' } })() } }
-  assert.equal(await classifyWithLlm(ctx, agent, 'ambiguous task', 500), null)
-})
-
-test('low-confidence LLM classification does not override weak', async () => {
-  const chunks = [{ type: 'text-delta', text: '{"mode":"spec","confidence":0.4,"reason":"uncertain"}' }]
-  const h = harness({ llmClassifier: 'ambiguous-only', llmMinConfidence: 0.7 }, chunks)
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我看看这个' }] }
-  })
-  const result = await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['bash', 'str_replace_editor', ...routerTools])
-  h.cleanup()
-})
-
-test('persists checkpoints, phase transitions, and verification coverage', async () => {
-  const h = harness()
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '修复登录并补回归测试' }] }
-  })
-  await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
+  assert.equal(JSON.parse(status.execute()).effectiveMode, 'react')
   const checkpoint = h.registered.find((tool) => tool.name === 'task_router_checkpoint')
-  const verification = h.registered.find((tool) => tool.name === 'task_router_verification')
-  const status = h.registered.find((tool) => tool.name === 'task_router_status')
-
-  assert.equal(JSON.parse(checkpoint.execute({ core: 'preserve current auth API', open: 'root cause unknown', next: 'reproduce the failing login', checkpoint: 'route assembled' })).ok, true)
-  assert.equal(JSON.parse(verification.execute({ action: 'declare', item: 'login regression test' })).ok, true)
-  h.session.events.push({ type: 'tool/call' })
-  h.handlers.get('session/event')(h.session, { type: 'tool/call' })
-  assert.equal(JSON.parse(status.execute()).ledger.phase, 'execute')
-
-  const recorded = JSON.parse(verification.execute({
-    action: 'record',
-    item: 'login regression test',
-    result: 'passed',
-    verifier: 'node --test test/login.test.mjs',
-    coverage: 'valid credentials and rejected invalid credentials',
-    evidence: '2 tests passed'
-  }))
-  assert.equal(recorded.verification.complete, true)
-  assert.equal(recorded.phase, 'verify')
-  const payload = JSON.parse(status.execute())
-  assert.equal(payload.verification.passed, 1)
-  assert.equal(payload.ledger.core[0], 'preserve current auth API')
-  assert.equal(payload.ledger.checkpoints.length, 1)
-  const persisted = JSON.parse(readFileSync(join(h.stateDirectory, 's1.json'), 'utf8'))
-  assert.equal(persisted.verification.records[0].verifier, 'node --test test/login.test.mjs')
+  assert.equal(JSON.parse(checkpoint.execute({ core: 'preserve API', checkpoint: 'seam' })).ok, true)
+  const resume = h.registered.find((tool) => tool.name === 'dshbooster_resume')
+  assert.match(resume.execute(), /Recovery anchor/)
   h.cleanup()
 })
 
-test('compaction and resume boundaries move the ledger to recover', async () => {
+test('mode-isolated subagent uses a fresh system prompt and does not mutate override', async () => {
+  const h = harness({}, [{ type: 'reasoning-delta', text: 'abc' }, { type: 'text-delta', text: 'isolated answer' }])
+  const subagent = h.registered.find((tool) => tool.name === 'dshbooster_subagent')
+  const result = await subagent.execute({ mode: 'react', task: 'build it', maxTokens: 64 })
+  assert.match(result, /isolated answer/)
+  assert.match(h.ctx.lastLlmOptions.system, /hands-on/)
+  const status = JSON.parse(h.registered.find((tool) => tool.name === 'dshbooster_status').execute())
+  assert.equal(status.override, null)
+  h.cleanup()
+})
+
+test('optional classifier is tool-free, reasoning-off, and bounded', async () => {
+  const agent = { options: { provider: 'p', model: 'm' } }
+  const ctx = { llm: { stream(options) { ctx.options = options; return (async function* () { yield { type: 'text-delta', text: '{"mode":"spec","confidence":0.9}' } })() } } }
+  assert.equal((await classifyWithLlm(ctx, agent, 'task')).mode, 'spec')
+  assert.equal(ctx.options.reasoningEffort, 'off')
+  assert.equal(ctx.options.maxTokens, 160)
+  assert.equal('tools' in ctx.options, false)
+})
+
+test('persisted state is schema v2 and contains no reasoning text', async () => {
   const h = harness()
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '审计并修复当前仓库' }] }
-  })
-  await h.handlers.get('system-prompt/assemble')({}, { agent: h.agent }, async () => assembled)
-  h.handlers.get('session/event')(h.session, { type: 'compaction/end' })
-  const status = h.registered.find((tool) => tool.name === 'task_router_status')
-  assert.equal(JSON.parse(status.execute()).ledger.phase, 'recover')
-  h.cleanup()
-})
-
-test('verification refuses records without verifier coverage', async () => {
-  const h = harness()
-  const verification = h.registered.find((tool) => tool.name === 'task_router_verification')
-  const result = JSON.parse(verification.execute({ action: 'record', item: 'build', result: 'passed' }))
-  assert.equal(result.ok, false)
-  assert.match(result.error, /verifier and coverage/)
-  h.cleanup()
-})
-
-test('defaults durable state to the session workspace', async () => {
-  const h = workspaceHarness()
-  h.handlers.get('session/event')(h.session, {
-    type: 'user/message',
-    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '修复当前项目的构建错误' }] }
-  })
+  h.event({ id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '修复登录' }] } })
   const persisted = JSON.parse(readFileSync(join(h.stateDirectory, 's1.json'), 'utf8'))
-  assert.equal(persisted.goal, '修复当前项目的构建错误')
+  assert.equal(persisted.schemaVersion, 2)
+  assert.equal(JSON.stringify(persisted).includes('reasoning'), false)
   h.cleanup()
 })
