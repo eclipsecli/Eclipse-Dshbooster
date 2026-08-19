@@ -1,0 +1,12 @@
+{
+  "name": "J-Space Cognition Suite",
+  "role": "reference-only",
+  "runtimeLoadedByDefault": false,
+  "performanceEvidence": "unverified",
+  "mechanisticClaims": "not-established",
+  "upstreamCommit": "885dc513702cc884f0b4fa07d24a27b2df5a1daf",
+  "source": "reference-jspace-full supplied by the Eclipse Dshbooster implementation contract",
+  "vendoredAt": "2026-08-17",
+  "layout": "The upstream j-space skill tree is copied byte-for-byte. README, LICENSE, CITATION, tests, and the nested j-space skill tree retain the upstream repository layout.",
+  "verification": "Run (cd vendor/j-space && sha256sum -c SHA256SUMS), python3.11 vendor/j-space/j-space/scripts/verify_suite.py, and python3.11 -m unittest discover -s vendor/j-space/tests -v."
+}

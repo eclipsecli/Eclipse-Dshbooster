@@ -1,5 +1,3 @@
-import { readFileSync, existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { classifyTask } from '../src/classifier.mjs'
 import { DriftProbe } from '../src/drift-probe.mjs'
 import {
@@ -9,10 +7,10 @@ import {
   guideFor,
   hasRouterOwner,
   isChatTask,
-  modulePrompt,
+  executionPrompt,
   parseMode,
   personaFor,
-  selectJSpace
+  selectExecutionPass
 } from '../src/protocol.mjs'
 import {
   advancePhase,
@@ -28,7 +26,6 @@ import {
 export const name = 'eclipse-dshbooster'
 export const inject = ['systemPrompt', 'tools', 'llm']
 
-const moduleRoot = new URL('../vendor/j-space/j-space/modules/', import.meta.url)
 const management = new Set(MANAGEMENT_TOOLS)
 const routerModes = new Set(['off', 'ambiguous-only', 'always'])
 
@@ -77,14 +74,6 @@ export async function classifyWithLlm(ctx, agent, task, timeoutMs = 1200) {
     }
     return parseClassifierJson(output)
   } catch { return null } finally { clearTimeout(timer) }
-}
-
-function loadModules(names) {
-  return names.slice(0, 2).flatMap((module) => {
-    const file = fileURLToPath(new URL(`${module}.md`, moduleRoot))
-    if (!existsSync(file)) return []
-    return [{ name: `j-space-${module}`, text: readFileSync(file, 'utf8'), order: 22 }]
-  })
 }
 
 export function apply(ctx, config = {}) {
@@ -184,7 +173,7 @@ export function apply(ctx, config = {}) {
     const askLlm = llmMode === 'always' || (llmMode === 'ambiguous-only' && classification.abstain)
     if (askLlm && !llmResults.has(session.id)) llmResults.set(session.id, await classifyWithLlm(ctx, agent, firstText, config.llmTimeoutMs || 1200))
     const refined = llmResults.get(session.id)
-    if (refined?.confidence >= (config.llmMinConfidence ?? 0.7)) classification = { ...classification, ...refined, abstain: false, source: 'llm-off' }
+    if (refined?.confidence >= (config.llmMinConfidence ?? 0.7)) classification = { ...classification, ...refined, abstain: false, source: 'llm-classifier' }
     classifications.set(session.id, classification)
 
     let state = stateFor(session, { task: firstText, classification })
@@ -210,12 +199,11 @@ export function apply(ctx, config = {}) {
     }
 
     const carriesUntrustedOutput = session.events?.some((event) => ['tool/result', 'tool/output', 'retrieval/result'].includes(event.type))
-    const gate = selectJSpace({ text: firstText, pass: state.pass === 'loop' ? 'loop' : undefined, toolOutput: carriesUntrustedOutput })
-    state = persist(session, { ...state, route: classification, pass: gate.pass, activeModules: gate.modules, phase: state.phase === 'intake' ? 'plan' : state.phase })
+    const gate = selectExecutionPass({ text: firstText, pass: state.pass === 'loop' ? 'loop' : undefined, toolOutput: carriesUntrustedOutput })
+    state = persist(session, { ...state, route: classification, pass: gate.pass, activeModules: gate.controls, phase: state.phase === 'intake' ? 'plan' : state.phase })
     const sections = (assembled.sections || []).filter((section) => !/persona|j-space|dshbooster/i.test(section.name))
     sections.push({ name: 'dshbooster-persona', text: persona, order: 0 })
-    sections.push({ name: 'dshbooster-protocol', text: modulePrompt(gate), order: 20 })
-    sections.push(...loadModules(gate.modules))
+    sections.push({ name: 'dshbooster-protocol', text: executionPrompt(gate), order: 20 })
     sections.push({ name: 'dshbooster-lifecycle', text: renderStateAnchor(state), order: 25 })
 
     if (promoted) {
@@ -242,10 +230,10 @@ export function apply(ctx, config = {}) {
     if (!session) return 'dshbooster: no active session'
     const state = stateFor(session)
     const route = routeFor(session, currentAgent()?.options?.model)
-    return JSON.stringify({ protocol: 'eclipse-dshbooster', schemaVersion: state.schemaVersion, routerMode: runtimeMode, classification: route.classified, effectiveMode: route.mode, override: state.modeOverride, promoted: state.promoted || session.events.some((event) => event.type === 'tool/call'), pass: state.pass, activeModules: state.activeModules, ledger: state, verification: verificationSummary(state), driftProbe: probes.get(session.id)?.snapshot() || null }, null, 2)
+    return JSON.stringify({ protocol: 'eclipse-dshbooster', schemaVersion: state.schemaVersion, routerMode: runtimeMode, policySource: { routing: 'dsh-mode-boost-derived', governance: 'dshbooster-native', jSpace: 'reference-only' }, evidenceLevel: { routing: 'observed-community-feedback', governance: 'verified-by-local-tests', jSpacePerformance: 'unverified' }, classification: route.classified, effectiveMode: route.mode, override: state.modeOverride, promoted: state.promoted || session.events.some((event) => event.type === 'tool/call'), executionPass: state.pass, activeControls: state.activeModules, pass: state.pass, activeModules: state.activeModules, state, verification: verificationSummary(state), driftProbe: probes.get(session.id)?.snapshot() || null }, null, 2)
   }
 
-  register({ name: 'dshbooster_status', description: 'Show the effective route, promotion, J-Space pass/modules, lifecycle state, and verification coverage.', parameters: {}, output, execute: status })
+  register({ name: 'dshbooster_status', description: 'Show the effective route, promotion, execution pass/controls, durable state, provenance, and verification coverage.', parameters: {}, output, execute: status })
   register({ name: 'task_router_status', description: 'Compatibility alias for dshbooster_status.', parameters: {}, output, execute: status })
 
   register({
@@ -284,7 +272,7 @@ export function apply(ctx, config = {}) {
   })
 
   register({
-    name: 'dshbooster_audit', description: 'Audit outgoing text for register leakage, unsupported verification claims, and repetition; never rewrites it.',
+    name: 'dshbooster_audit', description: 'Audit outgoing text for restricted notation, unsupported verification claims, and repetition; never rewrites it.',
     parameters: { text: { type: 'string', required: true, description: 'candidate outgoing text' } }, output,
     execute(args = {}) { return JSON.stringify(auditOutgoing(args.text), null, 2) }
   })

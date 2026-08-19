@@ -166,9 +166,9 @@ const texts = (rows) => rows.map((row) => typeof row === 'string' ? row : `${row
 export function renderStateAnchor(state, { longGap = false } = {}) {
   const verification = verificationSummary(state)
   return [
-    longGap || state.phase === 'recover' ? 'Recovery anchor: re-read the full ledger and resume from Next; do not reconstruct hidden reasoning.' : 'Lifecycle anchor: persist observed state at meaningful seams.',
+    longGap || state.phase === 'recover' ? 'Recovery anchor: re-read the durable task state and continue from Next; do not reconstruct hidden reasoning.' : 'Lifecycle anchor: persist observed task state at meaningful seams.',
     `Phase: ${state.phase}; pass: ${state.pass}; route: ${state.route?.mode || state.route || 'weak'}`,
-    `Active modules: ${state.activeModules.join(', ') || '(none)'}`,
+    `Active controls: ${state.activeModules.join(', ') || '(none)'}`,
     `Goal: ${state.goal || '(unset)'}`,
     `Core: ${state.core.join(' | ') || '(none)'}`,
     `Verified: ${texts(state.verified).join(' | ') || '(none)'}`,

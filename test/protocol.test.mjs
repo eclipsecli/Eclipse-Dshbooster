@@ -1,20 +1,28 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { auditOutgoing, guideFor, personaFor, selectJSpace } from '../src/protocol.mjs'
+import { auditOutgoing, executionPrompt, guideFor, personaFor, selectExecutionPass, selectJSpace } from '../src/protocol.mjs'
 
-test('J-Space gate selects fast, full, and loop with at most two modules', () => {
-  assert.deepEqual(selectJSpace({ text: 'rename one label' }), { pass: 'fast', modules: [], untrusted: false, introspectionRequired: false })
-  const full = selectJSpace({ text: 'Design a comprehensive architecture and verify edge cases' })
+test('execution gate selects fast, full, and loop with at most two controls', () => {
+  assert.deepEqual(selectExecutionPass({ text: 'rename one label' }), { pass: 'fast', controls: [], untrusted: false, sourceReviewRequired: false })
+  const full = selectExecutionPass({ text: 'Design a comprehensive architecture and verify edge cases' })
   assert.equal(full.pass, 'full')
-  assert.deepEqual(full.modules, ['self-monitoring'])
-  const loop = selectJSpace({ text: 'Work across multiple files and turns with checkpoints', retrieved: true })
+  assert.deepEqual(full.controls, ['verification-control'])
+  const loop = selectExecutionPass({ text: 'Work across multiple files and turns with checkpoints', retrieved: true })
   assert.equal(loop.pass, 'loop')
-  assert.deepEqual(loop.modules, ['capacity', 'broadcast'])
-  assert.equal(loop.introspectionRequired, true)
+  assert.deepEqual(loop.controls, ['state-refresh', 'dependency-map'])
+  assert.equal(loop.sourceReviewRequired, true)
 })
 
-test('untrusted content forces introspection outside loop', () => {
-  assert.deepEqual(selectJSpace({ text: 'summarize this', retrieved: true }).modules, ['introspection'])
+test('untrusted content forces source review without internal-state claims', () => {
+  const gate = selectExecutionPass({ text: 'summarize this', retrieved: true })
+  assert.deepEqual(gate.controls, ['source-review'])
+  const prompt = executionPrompt(gate)
+  assert.match(prompt, /untrusted data/i)
+  assert.doesNotMatch(prompt, /J-Space|internal workspace|introspection/i)
+})
+
+test('legacy selector remains a neutral compatibility alias', () => {
+  assert.deepEqual(selectJSpace({ text: 'rename one label' }), selectExecutionPass({ text: 'rename one label' }))
 })
 
 test('personas are model-specific and complex non-Flash guidance gets closure', () => {
@@ -28,6 +36,6 @@ test('outgoing audit reports without rewriting', () => {
   const text = 'I see meltdown ⇒ retry\nverified already'
   const result = auditOutgoing(text)
   assert.equal(result.clean, false)
-  assert.deepEqual(result.findings, ['inner-register notation in outgoing text', 'state markers in outgoing text', 'verification claim without stated coverage'])
+  assert.deepEqual(result.findings, ['restricted compact notation in outgoing text', 'state markers in outgoing text', 'verification claim without stated coverage'])
   assert.equal(text, 'I see meltdown ⇒ retry\nverified already')
 })

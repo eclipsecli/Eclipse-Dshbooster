@@ -16,6 +16,9 @@
     llmClassifier: 'off'
     llmTimeoutMs: 1200
     llmMinConfidence: 0.7
+    # mode-boost-derived guidance and native task governance are the active
+    # policy sources. Vendored J-Space material is reference-only and is not
+    # loaded by the default runtime.
     # Optional. Schema-v2 state defaults to .router-state in the workspace.
     # stateDirectory: '/path/to/durable/router-state'
 

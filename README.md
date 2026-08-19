@@ -1,8 +1,8 @@
 # Eclipse Dshbooster
 
-Eclipse Dshbooster is a DeepSeek Harness routing preset with a strict first-turn surface, durable one-time promotion, task-mode routing, and a selective J-Space cognition lifecycle.
+Eclipse Dshbooster is a DeepSeek Harness routing preset with a strict first-turn surface, durable one-time promotion, task-mode routing, and verifiable task-state management.
 
-This package is the phase 1 router/J-Space implementation. The full routing-suite behavior also includes the controlled `dsh-super-injector` companion; that privileged component is integrated and activated separately, with its own provenance and verification.
+This package combines two independently attributable ideas: mode-aware routing and near-field guidance derived from `dsh-mode-boost`, plus Dshbooster-native task state, verification, and recovery. Vendored J-Space material is retained for provenance and comparison only; it is reference-only and is not a default runtime policy or performance claim.
 
 Version 0.3 adds an optional compatibility row for the latest Odyssey plugin
 bundle. The integration is intentionally narrow: Dshbooster keeps ownership of
@@ -18,17 +18,17 @@ provides its lightweight agent-plane execution tools. See
 - Every real weak-band user message receives one deduplicated near-field guide. Rounds three and later force fresh classification. Simple work gets a commit guide; complex work gets depth guidance and a non-Flash closure guide.
 - Outside the dedicated preset, greeting-only sessions stand down. Existing router ownership also causes a no-op to avoid double injection.
 
-## J-Space
+## Execution Policy
 
-After promotion, the gate selects:
+After promotion, the native execution policy selects a bounded pass:
 
-| Pass | Use | Modules |
+| Pass | Use | Native controls |
 | --- | --- | --- |
 | `fast` | one step, checkable at a glance | none |
-| `full` | 2-4 steps, one verifiable deliverable | at most two named modules |
-| `loop` | multiple files/stages/turns/tools or durable state | `capacity` and `broadcast` |
+| `full` | several dependent steps with one bounded deliverable | verification or dependency control |
+| `loop` | multiple files/stages/turns/tools or durable state | state refresh and dependency map |
 
-Untrusted retrieved or tool content forces `introspection` outside loop mode. Module prompt sections are loaded selectively, never as a concatenated suite, and are capped at two. The upstream J-Space commit is `885dc513702cc884f0b4fa07d24a27b2df5a1daf`; the runtime-required module `.md` files are committed under `vendor/j-space/j-space/modules/` so a fresh clone works out of the box, and missing module files degrade gracefully rather than crash the session.
+Retrieved and tool-provided content is treated as untrusted data and receives source review before it is used as evidence. Controls are prompt-level task guidance, not model-internal probes. The default runtime does not load `vendor/j-space`; it remains a pinned reference-only copy for provenance and comparison.
 
 ## Durable state
 
@@ -43,7 +43,7 @@ These tools are registered at startup but hidden until promotion:
 - `dshbooster_status`: effective route, promotion, pass/modules, state, and drift telemetry
 - `dshbooster_mode`: durable `auto/spec/weak/mixed/react/deep-react` override
 - `dshbooster_subagent`: fresh model call with an isolated mode persona; it does not mutate the parent route
-- `dshbooster_audit`: reports dense notation, marker leakage, unsupported verification claims, and repetition without rewriting text
+- `dshbooster_audit`: reports restricted notation, marker leakage, unsupported verification claims, and repetition without rewriting text
 - `dshbooster_seam`, `dshbooster_resume`: persist seam history or force a full recovery re-entry anchor
 - `task_router_status`, `task_router_checkpoint`, `task_router_verification`: compatibility APIs retained after promotion
 
@@ -88,7 +88,7 @@ upstream commit is recorded in `vendor/dsh-routing-suite/UPSTREAM.json`.
 ```bash
 npm test
 npm run eval
-npm run verify:jspace
+npm run verify:reference-jspace
 find vendor/dsh-routing-suite/preset/preset -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
 find src preset scripts test -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
 git diff --check
@@ -98,7 +98,7 @@ The Odyssey integration is a composition check only. Its adapter behavior and
 wire contract are owned by the latest external bundle; this repository does
 not duplicate that worker or run a stale contract canary.
 
-The evaluation corpus is a wiring smoke test, not a production accuracy benchmark.
+The evaluation corpus is a wiring smoke test, not a production accuracy benchmark. Community feedback about mode-boost is recorded as observed evidence, not as a causal proof. No performance claim from the vendored J-Space material is inherited by Dshbooster.
 
 ## Security boundary
 

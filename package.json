@@ -3,12 +3,12 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Eclipse Dshbooster routing and J-Space lifecycle protocol for DeepSeek Harness",
+  "description": "Eclipse Dshbooster mode routing and verifiable task-state protocol for DeepSeek Harness",
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "classify": "node src/cli.mjs",
     "eval": "node scripts/evaluate.mjs examples/tasks.jsonl",
-    "verify:jspace": "python3.11 vendor/j-space/j-space/scripts/verify_suite.py && python3.11 -m unittest discover -s vendor/j-space/tests -v"
+    "verify:reference-jspace": "python3.11 vendor/j-space/j-space/scripts/verify_suite.py && python3.11 -m unittest discover -s vendor/j-space/tests -v"
   },
   "engines": {
     "node": ">=20"

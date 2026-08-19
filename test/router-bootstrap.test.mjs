@@ -3,8 +3,6 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { apply, classifyWithLlm } from '../preset/router-bootstrap.mjs'
 
 const allToolNames = ['bash', 'read', 'write', 'edit', 'glob', 'grep', 'str_replace_editor', 'web_search', 'dshbooster_status', 'dshbooster_mode', 'dshbooster_subagent', 'dshbooster_audit', 'task_router_status', 'task_router_checkpoint', 'task_router_verification']
@@ -57,6 +55,7 @@ test('management tools are registered but hidden before promotion, then full cat
   const promoted = await h.assemble()
   assert.deepEqual(promoted.tools.map((tool) => tool.name), allToolNames)
   assert.ok(promoted.sections.some((section) => section.name === 'dshbooster-lifecycle'))
+  assert.equal(promoted.sections.some((section) => /j-space/i.test(section.name)), false)
   h.cleanup()
 })
 
@@ -118,7 +117,11 @@ test('mode override persists, status exposes it, and compatibility tools remain 
   const mode = h.registered.find((tool) => tool.name === 'dshbooster_mode')
   assert.match(mode.execute({ mode: 'react' }), /override=yes/)
   const status = h.registered.find((tool) => tool.name === 'task_router_status')
-  assert.equal(JSON.parse(status.execute()).effectiveMode, 'react')
+  const statusValue = JSON.parse(status.execute())
+  assert.equal(statusValue.effectiveMode, 'react')
+  assert.equal(statusValue.policySource.routing, 'dsh-mode-boost-derived')
+  assert.equal(statusValue.policySource.jSpace, 'reference-only')
+  assert.equal(statusValue.evidenceLevel.jSpacePerformance, 'unverified')
   const checkpoint = h.registered.find((tool) => tool.name === 'task_router_checkpoint')
   assert.equal(JSON.parse(checkpoint.execute({ core: 'preserve API', checkpoint: 'seam' })).ok, true)
   const resume = h.registered.find((tool) => tool.name === 'dshbooster_resume')
@@ -155,19 +158,13 @@ test('persisted state is schema v2 and contains no reasoning text', async () => 
   h.cleanup()
 })
 
-test('vendored J-Space modules required by the gate are committed and load without throwing', async () => {
-  // Regression: promotion plus a loop/complex task loads these module files. If
-  // they are missing the facade throws ENOENT and crashes the session.
-  const moduleDir = new URL('../vendor/j-space/j-space/modules/', import.meta.url)
-  const required = ['capacity.md', 'broadcast.md', 'introspection.md', 'deep-reasoning.md', 'directed-focus.md', 'empirics.md', 'markers.md', 'self-monitoring.md', 'shorthand.md']
-  for (const name of required) {
-    assert.equal(existsSync(fileURLToPath(new URL(name, moduleDir))), true, `missing vendored module ${name}`)
-  }
-  // A promoted loop task still assembles successfully (gate loads modules).
+test('promoted loop task uses native controls without loading vendored J-Space modules', async () => {
   const h = harness()
   h.event({ id: 'u1', type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '重构整个项目并分多个文件实现' }] } })
   h.event({ id: 't1', type: 'tool/call', data: { name: 'bash' } })
   const result = await h.assemble()
   assert.ok(result.sections.some((s) => s.name === 'dshbooster-lifecycle'))
+  assert.ok(result.sections.some((s) => s.name === 'dshbooster-protocol' && /Execution pass: loop/.test(s.text)))
+  assert.equal(result.sections.some((s) => /j-space/i.test(s.name) || /J-Space/.test(s.text)), false)
   h.cleanup()
 })
